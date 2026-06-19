@@ -4,6 +4,21 @@ A full-stack content moderation platform where users submit images for automated
 
 ---
 
+## Approach
+
+I treated this as a moderation engine rather than a single AI call, because the hard part of moderation at scale is not asking a model "is this unsafe," it is turning that answer into a consistent, configurable, and accountable decision.
+
+I broke the problem into four concerns and built each separately:
+
+1. **Screening.** Get a structured, per-category judgement for an image from an AI model, with a confidence score and a reason, in a format the rest of the system can act on.
+2. **Enforcement.** Turn raw AI output into a verdict using admin-defined rules (per-category thresholds and enforcement behavior), not hard-coded logic. The same image can resolve differently depending on configuration.
+3. **Fairness.** Because automated decisions are imperfect, give users a way to contest a verdict and give admins a way to overturn it, with a full record on both sides.
+4. **Oversight.** Give admins visibility into volume, verdict distribution, appeal outcomes, and user activity so they can tell whether the system is calibrated correctly.
+
+I built and tested the backend first (auth, models, screening, verdict engine, appeals, analytics) so the API contract was stable, then built the React frontend against it page by page, verifying each flow end to end with real data.
+
+---
+
 ## Overview
 
 Every submitted image is screened independently against the platform's active policies. For each enabled category the AI returns a safe/unsafe classification, a confidence score, and a short reasoning summary. Enforcement is driven entirely by admin-configured policy: each category has a confidence threshold and an enforcement behavior (Flag for Review or Auto-Block). A category only affects a verdict when it is classified `unsafe` and its confidence meets or exceeds that category's threshold.
@@ -16,13 +31,14 @@ To keep the audit trail honest, the exact policy configuration in force at submi
 
 **User**
 - Register and log in (JWT authentication)
-- Submit one or several images for screening
+- Submit one or several images for screening in a single submission
 - Receive an overall verdict plus a per-category breakdown (classification, confidence, reasoning) for each image
 - Browse full submission history with filters by outcome, flagged category, and date range
 - File a written appeal on any flagged or blocked submission and track its status and the admin's response
 
 **Admin**
 - Everything a user can do, plus:
+- An admin overview dashboard surfacing pending appeals and platform health
 - Review the pending appeal queue, with the original submission, images, and the user's justification
 - Accept (override the verdict to Approved) or reject appeals, with an optional written response
 - Configure each policy category: enable/disable, set the confidence threshold, set enforcement behavior
@@ -38,11 +54,41 @@ To keep the audit trail honest, the exact policy configuration in force at submi
 | Backend | Node.js, Express |
 | Database | MongoDB with Mongoose ODM |
 | Auth | JSON Web Tokens (JWT), bcrypt password hashing |
-| AI screening | Google Gemini Vision API (`gemini-1.5-flash`) |
+| AI screening | Google Gemini API (`gemini-2.5-flash`) |
 | File handling | Multer (image uploads) |
 | Containerization | Docker, Docker Compose |
 
 The frontend and backend communicate exclusively over a REST API.
+
+---
+
+## Dependencies
+
+**Backend**
+
+| Package | Purpose |
+| --- | --- |
+| `express` | HTTP server and routing |
+| `mongoose` | MongoDB object modeling and schema validation |
+| `jsonwebtoken` | Signing and verifying auth tokens |
+| `bcryptjs` | Hashing user passwords |
+| `multer` | Handling multipart image uploads |
+| `cors` | Allowing the frontend origin to call the API |
+| `dotenv` | Loading environment variables |
+| `nodemon` (dev) | Auto-restarting the server during development |
+
+The Gemini API is called directly over HTTPS using the built-in `fetch`, so no AI SDK dependency is required.
+
+**Frontend**
+
+| Package | Purpose |
+| --- | --- |
+| `react`, `react-dom` | UI library |
+| `react-router-dom` | Client-side routing |
+| `axios` | HTTP client with a shared instance and auth interceptor |
+| `recharts` | Charts on the analytics dashboard |
+
+Exact versions are pinned in each `package.json` / `package-lock.json`.
 
 ---
 
@@ -54,7 +100,7 @@ The frontend and backend communicate exclusively over a REST API.
 
 **JWT with role-based middleware.** Authentication is stateless via JWT. Two layers of middleware protect routes: `authMiddleware` verifies the token and attaches the user, and `roleMiddleware('admin')` gates admin-only endpoints. This keeps authorization logic out of the controllers.
 
-**AI service abstraction with graceful fallback.** All AI interaction lives in `services/aiService.js` behind a single `analyzeImage` function, so the rest of the backend never touches the AI provider directly. If the AI request fails (bad key, rate limit, network), the service returns a safe-by-default result for every category instead of throwing, so a submission never hard-fails on an external dependency.
+**AI service abstraction with graceful fallback.** All AI interaction lives in `services/aiService.js` behind a single `analyzeImage` function, so the rest of the backend never touches the AI provider directly. If the AI request fails (bad key, rate limit, network), the service returns a safe-by-default result for every category instead of throwing, so a submission never hard-fails on an external dependency. The provider can be swapped in this one file without touching any other code.
 
 **Confidence-threshold verdict engine.** The verdict for each image is computed by comparing each `unsafe` category result against that category's configured threshold. An unsafe hit on an Auto-Block category blocks the image; an unsafe hit on a Flag category flags it; otherwise the image is approved. The overall submission outcome is the most severe outcome across its images.
 
@@ -76,16 +122,16 @@ content-moderation/
 │   ├── seeder.js         # Seeds the six default policies
 │   ├── server.js         # App entry point
 │   ├── Dockerfile
-│   └── .env
+│   └── .env              # Not committed
 ├── frontend/
 │   ├── src/
 │   │   ├── api/          # Axios instance + endpoint helpers
 │   │   ├── components/   # Navbar, PrivateRoute
 │   │   ├── context/      # AuthContext
 │   │   └── pages/        # Landing, Login, Register, Dashboard, Submit,
-│   │                     #   History, Appeals, Admin* pages
+│   │                     #   History, Appeals, AdminDashboard, Admin* pages
 │   ├── Dockerfile
-│   └── .env
+│   └── .env              # Not committed
 ├── docker-compose.yml
 └── README.md
 ```
@@ -121,7 +167,7 @@ A free Gemini key can be created at https://aistudio.google.com. Never commit `.
 
 1. Clone the repository and enter it:
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/SaimZafar/content-moderation.git
    cd content-moderation
    ```
 
@@ -141,8 +187,6 @@ A free Gemini key can be created at https://aistudio.google.com. Never commit `.
 5. Open the app:
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:5000
-
-Register an account from the UI. To create an admin, choose the Admin role on the registration form.
 
 ---
 
@@ -166,6 +210,33 @@ If you prefer to run the services directly:
    npm install
    npm start
    ```
+
+---
+
+## Usage Walkthrough
+
+1. **Create an admin.** On the registration form, choose the Admin role. Admins land on the admin overview; users land on their personal dashboard.
+2. **Submit images.** As any user, open Submit, drop in one or more images, and screen them. Each image gets its own verdict and per-category breakdown.
+3. **Review the verdict.** Approved means no enabled category was classified unsafe above its threshold. Flagged or Blocked means at least one was, according to that category's enforcement behavior.
+4. **Appeal.** As the user, open Appeals, pick a flagged or blocked submission, and submit a written justification.
+5. **Resolve the appeal.** As an admin, open the appeal queue, review the image and justification, and accept (which overrides the verdict to Approved) or reject, with an optional note.
+6. **Configure policy.** As an admin, open Policies to enable or disable categories, adjust thresholds, and switch enforcement behavior. Changes apply to future submissions only.
+7. **Monitor.** The analytics page shows submission volume over time, verdict distribution, appeal outcomes, and top users.
+
+---
+
+## Default Policy Configuration
+
+The seeder creates these six policies. All are enabled with a default confidence threshold of 70.
+
+| Category | Enforcement |
+| --- | --- |
+| Graphic Violence | Auto-Block |
+| Hate Symbols | Auto-Block |
+| Self-Harm | Flag for Review |
+| Extremist Propaganda | Auto-Block |
+| Weapons & Contraband | Flag for Review |
+| Harassment & Humiliation | Flag for Review |
 
 ---
 
@@ -218,3 +289,4 @@ All protected routes require an `Authorization: Bearer <token>` header. Admin ro
 - AI screening quality depends on the Gemini model and the prompt. The service degrades gracefully (safe-by-default) when the API is unavailable, so screening never blocks the request pipeline.
 - Uploaded images are stored on the backend filesystem under `uploads/`. For production this would move to object storage (such as S3 or Cloudinary).
 - The free Gemini tier is sufficient for evaluation-level traffic but is rate limited.
+- The verdict engine evaluates each image independently; the overall submission outcome is the most severe outcome across its images.
