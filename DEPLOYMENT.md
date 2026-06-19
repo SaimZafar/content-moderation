@@ -23,12 +23,12 @@ You created a free cluster, a database user, and allowed network access from any
 **Your connection string (MONGO_URI):**
 
 ```
-mongodb+srv://saimzafar12000_db_user:PASSWORD@cluster0.trrdvw9.mongodb.net/content-moderation?appName=Cluster0
+mongodb+srv://<DB_USER>:<DB_PASSWORD>@<CLUSTER>.mongodb.net/content-moderation?appName=Cluster0
 ```
 
-> Replace `PASSWORD` with your database user password.
-> If the password contains an `@`, write it as `%40` (e.g. `pirate@12900` → `pirate%4012900`).
-> Easier option: change the password in Atlas (Database Access → Edit) to letters + numbers only, then no encoding is needed.
+> Fill in your own user, password, and cluster host. Do NOT commit the real string — keep it only in Railway's Variables and your local `backend/.env`.
+> If the password contains an `@`, write it as `%40`.
+> Tip: use a password with only letters + numbers to avoid any encoding issues.
 
 Keep this string saved — you need it in Step 3.
 
