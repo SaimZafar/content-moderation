@@ -3,6 +3,7 @@
 A full-stack content moderation platform where users submit images for automated, AI-driven policy screening across six moderation categories. Each image receives a verdict (Approved, Flagged, or Blocked) with a per-category confidence breakdown. Users can appeal flagged or blocked verdicts, and admins control policy configuration, review appeals, and view platform analytics.
 
 ---
+### Live link: https://content-moderation-nine.vercel.app/
 
 ## Approach
 
